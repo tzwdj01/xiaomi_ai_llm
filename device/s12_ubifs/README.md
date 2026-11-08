@@ -44,8 +44,27 @@ zig cc -target aarch64-linux-gnu.2.19 -shared -fPIC -Os -Wall -Wextra -Werror \
 
 - system0 的持久 SSH、助手自启动、正常启动与回滚尚未实机验证；仅配置了 system1。不要直接修改活动根分区或覆盖内核来复制本次操作。
 - 原生连续追问和高级判停尚未适配。项目现有的 native ASR 组件面向已验证 S12A 固件与 ARM32 原生进程；这台设备的原生进程是 AArch64，固件 ABI 与组件基线不匹配。不要绕过安装器校验或把 ARM32 SO 直接注入 64 位进程。
-- 只读 ABI 研究：本机 `libaivs-message-util.so` 的顶层、upward 和 prepare 消息描述符分别报告结构体大小 48、72 和 40 字节，相关字段偏移分别为 32、40 和 24。`abi_probe.c` 在独立进程里使用本机描述符构造、序列化并反序列化 `activate_mode=1` 的消息，检查通过；它不向原生进程发送消息，也不启动录音。这仅验证数据布局，**不能证明可以安全唤醒、连续追问或接管判停**。`mipns-xiaomi` 使用 `libmdspeech.so`；可见 `mdspeech_create`、`mdspeech_data_read` 等符号，但原项目依赖的 `xaudio_register_callback` / `register_data_upload_callback` 入口在当前固件中没有对应的已验证实现，仍需研究会话建立、PCM 数据和真实唤醒交接。
+- ABI 研究：本机 `libaivs-message-util.so` 的顶层、upward 和 prepare 消息描述符分别报告结构体大小 48、72 和 40 字节，相关字段偏移分别为 32、40 和 24。`abi_probe.c` 和 `test_s12_prepare.c` 在独立进程中使用设备描述符验证 `activate_mode=1` 的副本序列化；后一测试还验证原对象不变、非目标消息透传、序列化变长时拒绝写入。`test_s12_json.c` 在独立进程使用设备 JsonCpp 验证 ASR-only 控制项、指令隔离和旧结果隔离。测试没有连接原生服务或发送语音。这些结果**不能证明可以安全唤醒、连续追问或接管判停**。
+- 原生唤醒透传探针捕获了 `libmdspeech.so` 的一次唤醒回调，原生应答正常；另在 `libvpm.so` 找到了本机的 `xaudio_register_callback` 和 `register_vpm_data_upload_callback`，它们与 S12A 的函数签名不同。临时 VPM 透传探针确认了两项注册，但测试期间设备意外重启，随后启动参数标记为 `kernel_panic`；临时日志已随 `/tmp` 清空，无法确定是探针、服务重启还是其他原因导致。重启后原厂音频进程、助手进程和 SSH 已恢复，用户确认小爱可以应答。之后启用串口日志，再用只观察注册、不替换任何回调的临时探针运行三分钟并自动恢复，期间没有重启；本次没有收到语音测试确认，不能据此断定崩溃根因或证明完整语音链路。**不要在其他设备运行这些探针或把它们当成安装器；应先确定崩溃根因。**
+- 模型独立验证：`test_s12_ort.c` 在独立进程载入 Silero v5（SHA256 `6b99cbfd39246b6706f98ec13c7c50c6b299181f2474fa05cbc8046acc274396`）及 sherpa-onnx 1.10.36 官方 AArch64 JNI 包内的 ONNX Runtime 1.17.1（SHA256 `89abc6da8d7ac84e5270349fe8a44ee7469d9a958797eed004f1a3f5c7df21d4`），用 16 个合成静音窗口完成推理，耗时 57 ms；没有读取麦克风。实验 `s12_silero.c` 使用同一个模型和项目所选的阈值，在由设备自带提示音与静音拼接的 12.85 秒测试信号上，产生了与官方 Windows x64 sherpa-onnx 1.10.36 相同的 6 个逐帧事件；重置后的重放一致，非法参数被拒绝。它只输出检测状态，不保存音频片段；20 秒上限及错误状态均要求调用方放弃本轮。该实现参考 sherpa-onnx 的 Apache-2.0 代码，其许可随本目录提供。这个单一测试信号不构成真实语音、噪声、性能或长期稳定性验收。旧内核的 `cpuinfo` 打印了 `kernel_max=-1` 解析错误。模型与运行库合计的试验 gzip 包约 6.55 MiB，本机 `/data` 剩余约 10.6 MiB；正式安装仍须核算程序、备份和安全余量。此试验没有安装高级判停，也没有连接实时 PCM。模型来自 [Silero v5.0](https://github.com/snakers4/silero-vad/tree/v5.0)，运行库来自 [sherpa-onnx v1.10.36 发布页](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.10.36)；仓库不包含这些第三方二进制。
 - 本机尝试一次合成音频的 `mibrain ai_service` 文件式 ASR，返回 `code=-1`；这只说明该次测试未成功，不能据此断言所有识别接口不可用。
 - 连续追问、首轮本地判停、OTA 拦截、长期稳定性以及其他硬件固件均未验收。具体适配应先完成 ABI 研究、独立测试、空间评估和回滚演练。
 
 本次参考上游 [`open-speaker-llm/xiaomi_ai_llm`](https://github.com/open-speaker-llm/xiaomi_ai_llm)，保留原项目许可及第三方组件许可证。此记录不含账号、网络地址或认证材料。
+
+## 独立实验构建
+
+下列程序只在独立进程中验证设备库和模型；它们不是安装器，不加载进原生服务，也不会启用追问或判停。先自行获取并校验 ONNX Runtime 1.17.1 的 `onnxruntime_c_api.h`（SHA256 `7e47eb78563da119f740dc0ddfda96800e779e0bcbd169a9a49e9c10746c4cd5`），令 `ORT_INCLUDE` 指向头文件目录：
+
+```sh
+zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror \
+  device/s12_ubifs/test_s12_prepare.c -ldl -o test_s12_prepare
+zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -Wl,--export-dynamic \
+  device/s12_ubifs/test_s12_json.c -ldl -lpthread -o test_s12_json
+zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -I"$ORT_INCLUDE" \
+  device/s12_ubifs/test_s12_ort.c -ldl -lrt -o test_s12_ort
+zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -I"$ORT_INCLUDE" \
+  device/s12_ubifs/test_s12_silero.c device/s12_ubifs/s12_silero.c -ldl -o test_s12_silero
+```
+
+将编译产物、核验后的模型和运行库临时传至设备后，`test_s12_prepare` 与 `test_s12_json` 不带参数运行；`test_s12_ort` 接收运行库和模型路径。`test_s12_silero` 额外接收单声道 16 kHz、S16LE 的测试信号文件路径。测试应在独立临时目录进行，不覆盖 `/data`，并自行处理第三方组件的许可。模型代码的 20 秒约束与错误处理仍需在完整控制链路中验证。
