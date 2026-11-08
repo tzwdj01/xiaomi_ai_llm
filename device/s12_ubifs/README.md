@@ -55,6 +55,7 @@ zig cc -target aarch64-linux-gnu.2.19 -shared -fPIC -Os -Wall -Wextra -Werror \
 - 模型独立验证：`test_s12_ort.c` 在独立进程载入 Silero v5（SHA256 `6b99cbfd39246b6706f98ec13c7c50c6b299181f2474fa05cbc8046acc274396`）及 sherpa-onnx 1.10.36 官方 AArch64 JNI 包内的 ONNX Runtime 1.17.1（SHA256 `89abc6da8d7ac84e5270349fe8a44ee7469d9a958797eed004f1a3f5c7df21d4`），用 16 个合成静音窗口完成推理，耗时 57 ms；没有读取麦克风。实验 `s12_silero.c` 使用同一个模型和项目所选的阈值，在由设备自带提示音与静音拼接的 12.85 秒测试信号上，产生了与官方 Windows x64 sherpa-onnx 1.10.36 相同的 6 个逐帧事件；重置后的重放一致，非法参数被拒绝。它只输出检测状态，不保存音频片段；20 秒上限及错误状态均要求调用方放弃本轮。该实现参考 sherpa-onnx 的 Apache-2.0 代码，其许可随本目录提供。这个单一测试信号不构成真实语音、噪声、性能或长期稳定性验收。旧内核的 `cpuinfo` 打印了 `kernel_max=-1` 解析错误。模型与运行库合计的试验 gzip 包约 6.55 MiB，本机 `/data` 剩余约 10.6 MiB；正式安装仍须核算程序、备份和安全余量。此试验没有安装高级判停，也没有连接实时 PCM。模型来自 [Silero v5.0](https://github.com/snakers4/silero-vad/tree/v5.0)，运行库来自 [sherpa-onnx v1.10.36 发布页](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.10.36)；仓库不包含这些第三方二进制。
 - `test_s12_decision.c` 在独立进程将上述模型结果送入上游的帧与判停决策结构，验证了测试信号的句末、600 个 10 ms 静音帧产生的无声退出条件，以及过期提议、未消费音频和取消状态被拒绝。`test_s12_decision_ipc.c` 使用两个独立进程和共享内存按 10 ms 间隔重放该信号，也在第 765 帧获得句末提议，并验证取消后不接受结果。两项测试没有连接原生服务或发送停止指令；跨进程异常退出、设备真实音频和端到端控制尚未验证。
 - `test_s12_endpoint_guards.c` 仅选择上游不依赖 ARM32 消息布局的保护测试，在 S12 独立进程中通过了无声退出、模拟模型进程死亡后的拒绝、再次唤醒交接，以及四轮和十二轮池切换；停止和音频回调均为测试替身。这不等于完整的 S12 判停安装或真实设备采集验收。
+- `s12_shadow_tap.h` 和 `test_s12_shadow_tap.c` 使用合成数据验证 S12 回调到判停缓冲的候选衔接：原回调透传一次，错误长度、空数据、缓冲超限及并发冲突会使试验失效，旧会话不能修改新会话。测试要求会话映射和身份在回调运行期间固定，且控制器必须检查冲突标志；这个草稿有编译保护，尚未加载进原生进程，也不作停止收音决策。
 - 本机尝试一次合成音频的 `mibrain ai_service` 文件式 ASR，返回 `code=-1`；这只说明该次测试未成功，不能据此断言所有识别接口不可用。
 - 连续追问、首轮本地判停、OTA 拦截、长期稳定性以及其他硬件固件均未验收。具体适配应先完成 ABI 研究、独立测试、空间评估和回滚演练。
 
@@ -83,6 +84,8 @@ zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -I"$ORT_INCLUDE"
   device/s12_ubifs/test_s12_decision_ipc.c device/s12_ubifs/s12_silero.c -ldl -lrt -o test_s12_decision_ipc
 zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -Wl,--export-dynamic \
   device/s12_ubifs/test_s12_endpoint_guards.c -ldl -lpthread -o test_s12_endpoint_guards
+zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror \
+  device/s12_ubifs/test_s12_shadow_tap.c -o test_s12_shadow_tap
 ```
 
 将编译产物、核验后的模型和运行库临时传至设备后，`test_s12_prepare`、`test_s12_json`、`test_s12_followup_safety` 与 `test_s12_endpoint_guards` 不带参数运行；`test_s12_ort` 接收运行库和模型路径。`test_s12_silero` 和两项 `test_s12_decision` 额外接收单声道 16 kHz、S16LE 的测试信号文件路径。测试应在独立临时目录进行，不覆盖 `/data`，并自行处理第三方组件的许可。模型代码的 20 秒约束与错误处理仍需在完整控制链路中验证。
