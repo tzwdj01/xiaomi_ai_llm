@@ -24,6 +24,7 @@ static int observer(struct neural_stream *s,struct neural_decision *d,const char
     while((int32_t)(deadline-monotonic_ms())>0 && getppid()==parent){
         uint32_t available=__atomic_load_n(&s->used,__ATOMIC_ACQUIRE);
         uint32_t state=__atomic_load_n(&s->state,__ATOMIC_ACQUIRE);
+        if(state==NS_INVALID){ok=0;break;}
         if(available<used || available>NS_BYTES || available%320 || available-used>50*320){ok=0;break;}
         if(available==used){
             if(state==NS_DONE)break;
@@ -72,7 +73,34 @@ int main(int argc,char **argv) {
     if(!found || frame<765 || frame>795)ok=0;
     ns_close(s,ok);if(!ok)kill(child,SIGTERM);
     int status=0;if(waitpid(child,&status,0)!=child || !WIFEXITED(status) || WEXITSTATUS(status))ok=0;
+    if(ok){
+        int start2[2],ready2[2];
+        if(pipe(start2) || pipe(ready2))ok=0;
+        else {
+            pid_t child2=fork();
+            if(child2==0){
+                close(start2[1]);close(ready2[0]);
+                int rc=observer(s,d,argv[1],argv[2],ready2[1],start2[0],parent);
+                close(start2[0]);close(ready2[1]);_exit(rc);
+            }
+            if(child2<0)ok=0;
+            else {
+                close(start2[0]);close(ready2[1]);
+                ns_init(s,2,(uint32_t)parent,(uint32_t)child2);nd_init(d,2,(uint32_t)parent,(uint32_t)child2);
+                if(!ns_claim(s,2,(uint32_t)parent,(uint32_t)parent) ||
+                   write(start2[1],"G",1)!=1 || read(ready2[0],&ch,1)!=1 || ch!='R')ok=0;
+                close(start2[1]);close(ready2[0]);
+                int16_t silence[160]={0};
+                if(ok && !ns_append(s,silence,320))ok=0;
+                usleep(50000);ns_close(s,0);
+                if(nd_due(s,d,2,(uint32_t)parent,(uint32_t)parent,monotonic_ms()))ok=0;
+                if(!ok)kill(child2,SIGTERM);
+                status=0;
+                if(waitpid(child2,&status,0)!=child2 || !WIFEXITED(status) || WEXITSTATUS(status)!=1)ok=0;
+            }
+        }
+    }
     munmap(s,sizeof(*s));munmap(d,sizeof(*d));
     if(!ok)return 1;
-    printf("S12_DECISION_IPC_TEST_OK speech_end_frame=%u separate_processes=2\n",frame);return 0;
+    printf("S12_DECISION_IPC_TEST_OK speech_end_frame=%u separate_processes=2 cancellation=rejected\n",frame);return 0;
 }
