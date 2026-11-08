@@ -9,6 +9,17 @@
 
 typedef size_t (*s12_pack_fn)(const void *, void *);
 typedef size_t (*s12_size_fn)(const void *);
+#define S12_PREPARE_MAX_BYTES 4096u
+
+static inline int s12_is_prepare(const void *message) {
+    if (!message) return 0;
+    const unsigned char *top=message,*up=NULL,*prepare=NULL;
+    uint32_t type;
+    memcpy(&type,top+24,sizeof(type)); if (type!=0) return 0;
+    memcpy(&up,top+32,sizeof(up)); if (!up) return 0;
+    memcpy(&type,up+24,sizeof(type)); if (type!=1) return 0;
+    memcpy(&prepare,up+40,sizeof(prepare)); return prepare!=NULL;
+}
 
 static inline size_t s12_pack_nonwakeup(const void *message, void *out,
                                         s12_pack_fn pack, s12_size_fn packed_size,
@@ -42,7 +53,7 @@ static inline size_t s12_pack_nonwakeup(const void *message, void *out,
      * refuse the rewrite if it would require even one extra byte. */
     if (!packed_size) return 0;
     size_t old_size = packed_size(message), new_size = packed_size(t.bytes);
-    if (!old_size || !new_size || new_size > old_size) return 0;
+    if (!old_size || old_size>S12_PREPARE_MAX_BYTES || !new_size || new_size>old_size) return 0;
     size_t result = pack(t.bytes, out);
     if (rewritten) *rewritten = 1;
     return result;

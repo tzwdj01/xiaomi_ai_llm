@@ -18,6 +18,7 @@ static size_t grow_size(const void *message) {
     memcpy(&mode, prep + 24, sizeof(mode));
     return mode ? 5 : 4;
 }
+static size_t oversized(const void *message) {(void)message; return S12_PREPARE_MAX_BYTES+1;}
 
 int main(void) {
     assert(sizeof(void *) == 8);
@@ -50,6 +51,7 @@ int main(void) {
     int rewritten = 0;
     assert(s12_pack_nonwakeup(t,NULL,mock_pack,grow_size,&rewritten) == 0 && !rewritten);
     assert(s12_pack_nonwakeup(t,NULL,mock_pack,NULL,&rewritten) == 0 && !rewritten);
+    assert(s12_pack_nonwakeup(t,NULL,mock_pack,oversized,&rewritten) == 0 && !rewritten);
     size_t n = s12_pack_nonwakeup(t, output, pack, size_fn, &rewritten);
     assert(rewritten && n && n < sizeof(output));
     assert(!memcmp(t,orig_t,48) && !memcmp(u,orig_u,72) && !memcmp(p,orig_p,40));
