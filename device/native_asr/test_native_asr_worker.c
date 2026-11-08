@@ -51,9 +51,8 @@ int main(void) {
         if(!ready)usleep(10000);
     }
     assert(ready);
-    fd=open(NATIVE_BUSY_FILE,O_CREAT|O_EXCL|O_WRONLY,0600);assert(fd>=0);close(fd);
     set_phase(REQUEST);assert(wait_phase(FAILED));assert(!wake_calls && !ivw_calls);
-    assert(unlink(NATIVE_BUSY_FILE)==0);
+    fd=open(NATIVE_BUSY_FILE,O_CREAT|O_EXCL|O_WRONLY,0600);assert(fd>=0);close(fd);
     set_phase(REQUEST);
     for(unsigned i=0;i<100 && !ivw_calls;i++)usleep(10000);
     assert(wake_calls==1 && ivw_calls==1);
@@ -61,8 +60,9 @@ int main(void) {
     for(unsigned i=0;i<100 && wake_calls<2;i++)usleep(10000);
     assert(wake_calls==2);set_phase(FAILED);usleep(400000);assert(ivw_calls==1);
     assert(!pthread_cancel(thread) && !pthread_join(thread,NULL));
+    assert(unlink(NATIVE_BUSY_FILE)==0);
     assert(unlink(CONTROL_FILE)==0);unlink(CONTROL_DIR "/events.log");
     assert(rmdir(CONTROL_DIR)==0);
-    puts("PASS: busy denies wake, idle triggers, cancellation drops stale completion");
+    puts("PASS: unowned wake denied, owned wake allowed, cancellation drops stale completion");
     return 0;
 }

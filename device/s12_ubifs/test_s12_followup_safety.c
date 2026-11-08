@@ -139,9 +139,8 @@ int main(void) {
         if(!ready)usleep(10000);
     }
     assert(ready);
-    /* A busy marker denies a wake. The test marker is inside CONTROL_DIR and
-     * cannot affect the real assistant's busy state. */
-    fd=open(NATIVE_BUSY_FILE,O_CREAT|O_EXCL|O_WRONLY,0600);assert(fd>=0);close(fd);
+    /* The worker requires the followup ownership marker. This test marker is
+     * inside CONTROL_DIR and cannot affect the real assistant's busy state. */
     update_state(REQUEST);
     int denied=0;
     for(unsigned i=0;i<100 && !denied;i++) {
@@ -149,7 +148,7 @@ int main(void) {
         if(!denied)usleep(10000);
     }
     assert(denied && calls==1 && !ivw_calls);
-    assert(unlink(NATIVE_BUSY_FILE)==0);
+    fd=open(NATIVE_BUSY_FILE,O_CREAT|O_EXCL|O_WRONLY,0600);assert(fd>=0);close(fd);
     update_state(REQUEST);
     for(unsigned i=0;i<100 && !ivw_calls;i++)usleep(10000);
     if(ivw_calls!=1 || calls!=2) {
@@ -172,7 +171,7 @@ int main(void) {
     assert(calls==3);fd=state_open(&s);assert(fd>=0);s.phase=FAILED;state_close(fd,&s);
     usleep(400000);assert(ivw_calls==1);
     assert(!pthread_cancel(thread) && !pthread_join(thread,NULL));
-    unlink(CONTROL_FILE);unlink(CONTROL_DIR "/events.log");unlink(CONTROL_DIR "/physical-wake");
+    unlink(NATIVE_BUSY_FILE);unlink(CONTROL_FILE);unlink(CONTROL_DIR "/events.log");unlink(CONTROL_DIR "/physical-wake");
     assert(rmdir(CONTROL_DIR)==0);dlclose(lib);
     puts("S12_FOLLOWUP_SAFETY_TEST_OK: pack, mock IVW bridge, cancellation, physical handoff");
     return 0;

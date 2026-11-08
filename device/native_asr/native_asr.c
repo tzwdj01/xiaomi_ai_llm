@@ -412,7 +412,9 @@ static void *worker(void *arg) {
         int changed=wake && ivw && ctx && s.mipns_pid!=(uint32_t)getpid();
         if (changed) s.mipns_pid=(uint32_t)getpid();
         if (s.phase!=REQUEST || !active(&s)) { state_close(fd,changed?&s:NULL); pthread_mutex_unlock(&wake_dispatch_lock); continue; }
-        if (!wake || !ivw || !ctx || !alive(s.aivs_pid) || access("/tmp/mipns/mute",F_OK)==0 || access(NATIVE_BUSY_FILE,F_OK)==0) {
+        /* A native-live followup sets the busy marker before requesting this
+         * wake. Do not start a capture if that ownership marker is absent. */
+        if (!wake || !ivw || !ctx || !alive(s.aivs_pid) || access("/tmp/mipns/mute",F_OK)==0 || access(NATIVE_BUSY_FILE,F_OK)!=0) {
             s.phase=FAILED; state_close(fd,&s); pthread_mutex_unlock(&wake_dispatch_lock); continue;
         }
         s.phase=TRIGGERED; state_close(fd,&s);
