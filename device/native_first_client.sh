@@ -575,6 +575,7 @@ led_set_all() {
     local color="$1"
     local i
 
+    [ "$LED_FEEDBACK_ENABLED" = "1" ] || return 0
     [ -w "$LED_RGB" ] || return 0
     for i in $LED_IDS; do
         echo "$i $color" > "$LED_RGB" 2>/dev/null
@@ -585,11 +586,13 @@ led_write_one_sync() {
     local pos="$1"
     local color="$2"
 
+    [ "$LED_FEEDBACK_ENABLED" = "1" ] || return 0
     [ -w "$LED_RGB" ] || return 0
     echo "$pos $color" > "$LED_RGB" 2>/dev/null
 }
 
 led_native_shut_all() {
+    [ "$LED_FEEDBACK_ENABLED" = "1" ] || return 0
     ubus -t 1 call led shut_all >/dev/null 2>&1
     /bin/show_led c >/dev/null 2>&1
 }

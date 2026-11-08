@@ -1,7 +1,8 @@
 /* Experimental S12 1.74.18 ABI adaptation. NOT an installer or live hook.
  * The S12 wakeword-buffer completion callback has not been verified, so this
- * build deliberately never registers one and the inherited worker cannot
- * claim readiness or start a software wake. No native service should load it. */
+ * build has no production code to register one. The inherited worker can
+ * claim readiness only in isolated tests that supply a mock. No native service
+ * should load it. */
 #ifndef S12_ISOLATED_UNIT_TEST
 #error "Research code: compile only through the isolated S12 safety test"
 #endif
@@ -25,6 +26,32 @@ typedef int (*s12_wake_fn)(void *,int,float);
 static s12_wake_fn s12_original_wake;
 static union {uint64_t align;unsigned char bytes[S12_MDSPEECH_PARAMS];} s12_params_copy;
 static __thread int s12_wake_result;
+
+/* Isolated mock only: the reviewed firmware's recorder copies these callback
+ * slots. The offline emulator confirms the three-argument empty-buffer branch,
+ * but runtime thread ownership and object lifetime remain unverified. There is
+ * deliberately no production code that discovers or binds this pointer. */
+typedef void (*s12_ivw_fn)(unsigned,void *,uint64_t);
+static s12_ivw_fn s12_mock_ivw;
+static void s12_mock_ivw_forward(unsigned result,void *buffer,unsigned length,
+                                 unsigned unused,int flags) {
+    if(s12_mock_ivw && result==1 && buffer && !length && !unused && !flags)
+        s12_mock_ivw(result,buffer,(uint64_t)length);
+}
+static int s12_mock_bind_ivw(const unsigned char *object,uintptr_t expected_ivw,
+                             uintptr_t expected_asr) {
+    if(!object || !expected_ivw || !expected_asr || s12_mock_ivw)return 0;
+    uintptr_t ivw=0,asr=0,context=0;
+    memcpy(&ivw,object+0x30,sizeof(ivw));
+    memcpy(&asr,object+0x38,sizeof(asr));
+    memcpy(&context,object+0x58,sizeof(context));
+    if(ivw!=expected_ivw || asr!=expected_asr || !context)return 0;
+    pthread_mutex_lock(&wake_lock);
+    s12_mock_ivw=(s12_ivw_fn)ivw;
+    original_ivw=s12_mock_ivw_forward;
+    pthread_mutex_unlock(&wake_lock);
+    return 1;
+}
 
 static void s12_wake_forward(void *ctx,unsigned code,float angle) {
     s12_wake_result=s12_original_wake?s12_original_wake(ctx,(int)code,angle):-1;

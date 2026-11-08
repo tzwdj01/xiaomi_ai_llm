@@ -45,11 +45,13 @@ zig cc -target aarch64-linux-gnu.2.19 -shared -fPIC -Os -Wall -Wextra -Werror \
 - system0 的持久 SSH、助手自启动、正常启动与回滚尚未实机验证；仅配置了 system1。不要直接修改活动根分区或覆盖内核来复制本次操作。
 - 原生连续追问和高级判停尚未适配。项目现有的 native ASR 组件面向已验证 S12A 固件与 ARM32 原生进程；这台设备的原生进程是 AArch64，固件 ABI 与组件基线不匹配。不要绕过安装器校验或把 ARM32 SO 直接注入 64 位进程。
 - ABI 研究：本机 `libaivs-message-util.so` 的顶层、upward 和 prepare 消息描述符分别报告结构体大小 48、72 和 40 字节，相关字段偏移分别为 32、40 和 24。`abi_probe.c` 和 `test_s12_prepare.c` 在独立进程中使用设备描述符验证 `activate_mode=1` 的副本序列化；后一测试还验证原对象不变、非目标消息透传、序列化变长时拒绝写入。`test_s12_json.c` 在独立进程使用设备 JsonCpp 验证 ASR-only 控制项、指令隔离和旧结果隔离。测试没有连接原生服务或发送语音。这些结果**不能证明可以安全唤醒、连续追问或接管判停**。
-- `native_asr_s12_experiment.c` 是仅供独立测试的 64 位适配草稿，编译被限制在单元测试中。`test_s12_followup_safety.c` 使用设备的消息描述符和模拟回调验证了消息副本、普通消息透传、真实唤醒交接的状态转换，以及缺少已验证回调时拒绝启动；这些交接是模拟测试，没有在正在运行的音箱对话中验证。唤醒词缓冲完成通知、采集链路和完整隔离尚未验证，不能将此草稿加载进音箱服务。
-- 静态分析显示本机 VPM 的 ASR 回调使用不同于 S12A 的数据结构，代码路径包含 1920 字节的数据块。`vpm_pcm_probe_experiment.c` 是仅能在模拟测试中编译的帧元数据观察草稿，只计数类型与长度，不复制 PCM；`test_s12_pcm_probe.c` 验证了模拟回调透传和异常长度计数。随后在本机做了限定时间、自动恢复的单回调观察，注册被确认，但没有记录到音频帧；不能据此确认真实语音是否经过该接口，也不能据静态分析将其视作已经适配的采集接口。
-- 本机固件另有内部唤醒词数据处理回调和“唤醒前 ASR 缓存”路径；静态分析表明空长度分支会改变缓冲门控状态。该发现仅适用于这份固件，具体调用时机、线程安全和对真实识别的影响均未验证；不能凭固定地址调用该回调或据此开启连续追问。
+- `native_asr_s12_experiment.c` 是仅供独立测试的 64 位适配草稿，编译被限制在单元测试中。`test_s12_followup_safety.c` 使用设备的消息描述符和模拟回调验证了消息副本、普通消息透传、唤醒交接、忙碌拒绝和取消后丢弃旧回调；这些交接是模拟测试，没有在正在运行的音箱对话中验证。唤醒词缓冲完成通知、采集链路和完整隔离尚未验证，不能将此草稿加载进音箱服务。
+- 本机 VPM 的 ASR 回调使用不同于 S12A 的数据结构。限定时间的单回调观察在用户一次正常唤醒问答中计到 108 个 1920 字节音频块、另有三个其他包，长度检查没有发现异常；实验只记录类型与长度，没有保存语音。说话期间音箱能够正常应答，但此后立即发生了下述内核崩溃。探针当时处于加载状态，因此不能排除其影响；之前也曾在没有探针时发生自行重启。此结果确认回调在本次问答中被调用，并不证明音频格式、长期稳定性或完整判停链路。`vpm_pcm_probe_experiment.c` 仍仅允许模拟测试编译。
+- 本机运行中的原厂进程的回调槽位与静态分析结果一致；固件另有唤醒词数据处理回调和“唤醒前 ASR 缓存”路径。`test_s12_ivw_emulator.py` 在本地模拟器中执行固件片段并替换外部依赖，发现指定空长度输入会打开缓冲门控。实验只适用于对应固件，无法证明实际调用时机、线程安全或对真实识别的影响；不能凭固定地址调用该回调或据此开启连续追问。
+- 模拟追问时发现上游 `native_asr.c` 的忙碌标记判断方向相反：标记不存在时会错误拒绝，存在时可能放行。研究分支改为仅在标记存在时拒绝，并使用 `NATIVE_BUSY_FILE`；`test_native_asr_worker.c` 在独立进程验证忙碌拒绝、空闲模拟唤醒和取消丢弃旧完成回调。该修正尚未作为追问服务安装到本机。
 - 原生唤醒透传探针捕获了 `libmdspeech.so` 的一次唤醒回调，原生应答正常；另在 `libvpm.so` 找到了本机的 `xaudio_register_callback` 和 `register_vpm_data_upload_callback`，它们与 S12A 的函数签名不同。临时 VPM 透传探针确认了两项注册，但测试期间设备意外重启，随后启动参数标记为 `kernel_panic`；临时日志已随 `/tmp` 清空，无法确定是探针、服务重启还是其他原因导致。重启后原厂音频进程、助手进程和 SSH 已恢复，用户确认小爱可以应答。之后启用串口日志，再用只观察注册、不替换任何回调的临时探针运行三分钟并自动恢复，期间没有重启；本次没有收到语音测试确认，不能据此断定崩溃根因或证明完整语音链路。**不要在其他设备运行这些探针或把它们当成安装器；应先确定崩溃根因。**
 - 后来设备在探针已卸载数小时后再次自行重启，启动参数仍标记 `kernel_panic`。本机当时将内核串口日志级别设为 0，串口日志只保存了复位和启动信息，没有崩溃堆栈；两次重启的根因仍未知。诊断时暂时把控制台级别调到 4 并验证标记能进入本地串口日志，设置有 30 分钟自动恢复保护，不写入固件；这是一次临时诊断，不表示修复了重启问题。
+- 随后一次真实唤醒后又发生内核崩溃；本地串口栈显示 `wakeup.sh` 写入 sysfs，经过 `is31fl3236a` 的 `led_control`、`AddItem`、`FreeNode`，在 `remove_vm_area` 处发生空指针异常。原厂唤醒脚本与新增灯效都可能涉及灯光驱动，栈本身不能单独证明写入来源，也不能证明其他重启同因。当时单回调探针已加载。为降低风险，本机已暂时设置 `LED_FEEDBACK_ENABLED=0`，并为客户端的直接 LED 写入和关闭灯效调用补充该开关保护；配置和客户端已私有备份。`test_led_guard.sh` 使用普通临时文件与替身命令检查开关，没有访问真实 LED。用户随后各验证了一次原生回答和 DeepSeek 首轮回答，均正常且当时没有重启。当前不能宣称重启问题已修复或建议重新开启灯效，仍需长期稳定性验证。
 - 模型独立验证：`test_s12_ort.c` 在独立进程载入 Silero v5（SHA256 `6b99cbfd39246b6706f98ec13c7c50c6b299181f2474fa05cbc8046acc274396`）及 sherpa-onnx 1.10.36 官方 AArch64 JNI 包内的 ONNX Runtime 1.17.1（SHA256 `89abc6da8d7ac84e5270349fe8a44ee7469d9a958797eed004f1a3f5c7df21d4`），用 16 个合成静音窗口完成推理，耗时 57 ms；没有读取麦克风。实验 `s12_silero.c` 使用同一个模型和项目所选的阈值，在由设备自带提示音与静音拼接的 12.85 秒测试信号上，产生了与官方 Windows x64 sherpa-onnx 1.10.36 相同的 6 个逐帧事件；重置后的重放一致，非法参数被拒绝。它只输出检测状态，不保存音频片段；20 秒上限及错误状态均要求调用方放弃本轮。该实现参考 sherpa-onnx 的 Apache-2.0 代码，其许可随本目录提供。这个单一测试信号不构成真实语音、噪声、性能或长期稳定性验收。旧内核的 `cpuinfo` 打印了 `kernel_max=-1` 解析错误。模型与运行库合计的试验 gzip 包约 6.55 MiB，本机 `/data` 剩余约 10.6 MiB；正式安装仍须核算程序、备份和安全余量。此试验没有安装高级判停，也没有连接实时 PCM。模型来自 [Silero v5.0](https://github.com/snakers4/silero-vad/tree/v5.0)，运行库来自 [sherpa-onnx v1.10.36 发布页](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.10.36)；仓库不包含这些第三方二进制。
 - `test_s12_decision.c` 在独立进程将上述模型结果送入上游的帧与判停决策结构，验证了测试信号的句末、600 个 10 ms 静音帧产生的无声退出条件，以及过期提议、未消费音频和取消状态被拒绝。`test_s12_decision_ipc.c` 使用两个独立进程和共享内存按 10 ms 间隔重放该信号，也在第 765 帧获得句末提议，并验证取消后不接受结果。两项测试没有连接原生服务或发送停止指令；跨进程异常退出、设备真实音频和端到端控制尚未验证。
 - `test_s12_endpoint_guards.c` 仅选择上游不依赖 ARM32 消息布局的保护测试，在 S12 独立进程中通过了无声退出、模拟模型进程死亡后的拒绝、再次唤醒交接，以及四轮和十二轮池切换；停止和音频回调均为测试替身。这不等于完整的 S12 判停安装或真实设备采集验收。
@@ -69,6 +71,8 @@ zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -Wl,--export-dyn
   device/s12_ubifs/test_s12_json.c -ldl -lpthread -o test_s12_json
 zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -Wl,--export-dynamic \
   device/s12_ubifs/test_s12_followup_safety.c -ldl -lpthread -o test_s12_followup_safety
+zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -Wl,--export-dynamic \
+  device/native_asr/test_native_asr_worker.c -ldl -lpthread -o test_native_asr_worker
 zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -I"$ORT_INCLUDE" \
   device/s12_ubifs/test_s12_ort.c -ldl -lrt -o test_s12_ort
 zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -I"$ORT_INCLUDE" \
@@ -82,3 +86,5 @@ zig cc -target aarch64-linux-gnu.2.19 -Os -Wall -Wextra -Werror -Wl,--export-dyn
 ```
 
 将编译产物、核验后的模型和运行库临时传至设备后，`test_s12_prepare`、`test_s12_json`、`test_s12_followup_safety` 与 `test_s12_endpoint_guards` 不带参数运行；`test_s12_ort` 接收运行库和模型路径。`test_s12_silero` 和两项 `test_s12_decision` 额外接收单声道 16 kHz、S16LE 的测试信号文件路径。测试应在独立临时目录进行，不覆盖 `/data`，并自行处理第三方组件的许可。模型代码的 20 秒约束与错误处理仍需在完整控制链路中验证。
+
+`test_native_asr_worker` 也不需要参数；`sh device/s12_ubifs/test_led_guard.sh /path/to/native_first_client.sh` 只在临时文件上测试灯效开关。离线的 `python device/s12_ubifs/test_s12_ivw_emulator.py /path/to/mipns-xiaomi` 需要自行安装 `unicorn==2.1.4` 和 `pyelftools`、自备对应设备固件；MD5 只是拒绝其他构建的兼容检查，并非供应链认证。模拟器替换了外部函数，不能作为真机安全验收。
