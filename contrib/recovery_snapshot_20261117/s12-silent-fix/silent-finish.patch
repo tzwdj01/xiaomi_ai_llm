@@ -1,0 +1,27 @@
+--- s12-live-before.sh
++++ s12-live-silent-fix.sh
+@@ -1844,6 +1844,24 @@
+         RESULT_SOURCE="aivs_lab_instruction"
+         echo "$dialog_id" > "$AIVS_LAB_LAST_DIALOG_FILE"
+         return 0
++    fi
++
++    # S12 opt-in: only a complete final question whose NLP turn finished
++    # silently and contains no unrecognised directives may use the fallback.
++    if [ "${AIVS_SILENT_FINISH_FALLBACK:-0}" = 1 ] &&
++        [ -n "$RESULT_QUERY" ] && [ -z "$RESULT_SPEAK" ] &&
++        printf '%s\n' "$RESULT_QUERY" | grep -Eq '几天|什么|怎么|如何|哪个|能否|是否|多少|谁|哪|为什么|吗|呢|呀|\?|？|告诉我|建议'; then
++        if printf '%s\n' "$dialog_lines" | grep -q '"name":"StartAnswer","namespace":"Nlp"' &&
++           printf '%s\n' "$dialog_lines" | grep -q '"name":"FinishAnswer","namespace":"Nlp"' &&
++           printf '%s\n' "$dialog_lines" | tail -1 | grep -q '"name":"Finish","namespace":"Dialog"' &&
++           ! printf '%s\n' "$dialog_lines" | grep -Ev '"name":"(RecognizeResult|StopCapture|VoiceprintRecognizeResult)","namespace":"SpeechRecognizer"|"name":"(StartAnswer|FinishAnswer)","namespace":"Nlp"|"name":"Finish","namespace":"Dialog"' >/dev/null; then
++            RESULT_TS=$(date +%s)
++            RESULT_DOMAIN=michat
++            RESULT_ACTION=model
++            RESULT_SOURCE=aivs_lab_silent_finish
++            echo "$dialog_id" > "$AIVS_LAB_LAST_DIALOG_FILE"
++            return 0
++        fi
+     fi
+
+     if [ -n "$RESULT_QUERY" ] && [ -n "$RESULT_SPEAK" ] && is_unsupported_result; then
